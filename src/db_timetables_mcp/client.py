@@ -124,6 +124,98 @@ def _messages(*elements: ET.Element | None) -> list[str]:
     return texts
 
 
+# The Timetables API only matches official station names, so "Frankfurt Hbf" finds the
+# S-Bahn platform "Frankfurt Hbf (tief)" and "Berlin" finds a tram stop. Map common
+# city names (and English names) to their main station.
+MAIN_STATIONS = {
+    "berlin": "Berlin Hbf",
+    "hamburg": "Hamburg Hbf",
+    "münchen": "München Hbf",
+    "munich": "München Hbf",
+    "köln": "Köln Hbf",
+    "cologne": "Köln Hbf",
+    "frankfurt": "Frankfurt(Main)Hbf",
+    "frankfurt main": "Frankfurt(Main)Hbf",
+    "frankfurt am main": "Frankfurt(Main)Hbf",
+    "frankfurt (main)": "Frankfurt(Main)Hbf",
+    "frankfurt oder": "Frankfurt(Oder)",
+    "frankfurt (oder)": "Frankfurt(Oder)",
+    "stuttgart": "Stuttgart Hbf",
+    "düsseldorf": "Düsseldorf Hbf",
+    "dortmund": "Dortmund Hbf",
+    "essen": "Essen Hbf",
+    "leipzig": "Leipzig Hbf",
+    "dresden": "Dresden Hbf",
+    "hannover": "Hannover Hbf",
+    "hanover": "Hannover Hbf",
+    "nürnberg": "Nürnberg Hbf",
+    "nuremberg": "Nürnberg Hbf",
+    "bremen": "Bremen Hbf",
+    "halle": "Halle(Saale)Hbf",
+    "halle saale": "Halle(Saale)Hbf",
+    "freiburg": "Freiburg(Breisgau) Hbf",
+    "offenbach": "Offenbach(Main)Hbf",
+    "mülheim": "Mülheim(Ruhr)Hbf",
+    "mannheim": "Mannheim Hbf",
+    "karlsruhe": "Karlsruhe Hbf",
+    "erfurt": "Erfurt Hbf",
+    "kassel": "Kassel-Wilhelmshöhe",
+    "mainz": "Mainz Hbf",
+    "wiesbaden": "Wiesbaden Hbf",
+    "bonn": "Bonn Hbf",
+    "aachen": "Aachen Hbf",
+    "münster": "Münster(Westf)Hbf",
+    "augsburg": "Augsburg Hbf",
+    "würzburg": "Würzburg Hbf",
+    "regensburg": "Regensburg Hbf",
+    "rostock": "Rostock Hbf",
+    "kiel": "Kiel Hbf",
+    "lübeck": "Lübeck Hbf",
+    "magdeburg": "Magdeburg Hbf",
+    "potsdam": "Potsdam Hbf",
+    "heidelberg": "Heidelberg Hbf",
+}
+
+_UMLAUTS = (("ae", "ä"), ("oe", "ö"), ("ue", "ü"))
+
+
+def _key(text: str) -> str:
+    text = " ".join(text.lower().replace("hauptbahnhof", "").replace("hbf", "").split())
+    return text.replace("(", "").replace(")", "").strip() if "(" in text else text
+
+
+def _with_umlauts(text: str) -> str:
+    for plain, umlaut in _UMLAUTS:
+        text = text.replace(plain, umlaut)
+    return text
+
+
+def station_candidates(query: str) -> list[str]:
+    """Name variants to try, most likely first."""
+    query = " ".join(query.split())
+    out: list[str] = []
+    for key in (_key(query), _with_umlauts(_key(query))):
+        if key in MAIN_STATIONS:
+            out.append(MAIN_STATIONS[key])
+        if key.replace(" ", "") != key and key.replace(" ", "") in MAIN_STATIONS:
+            out.append(MAIN_STATIONS[key.replace(" ", "")])
+    out.append(query)
+    if "hbf" not in query.lower():
+        out.append(f"{query} Hbf")
+    out.append(query.replace(" (", "(").replace(") ", ")"))
+    out.append(_with_umlauts(query))
+    seen: set[str] = set()
+    return [c for c in out if not (c in seen or seen.add(c))]
+
+
+def rank_stations(stations: list[Station], wanted: str) -> list[Station]:
+    """Exact name first, then main stations, underground S-Bahn platforms last."""
+    def score(s: Station) -> tuple:
+        name = s.name.lower()
+        return (name != wanted.lower(), "(tief)" in name, "hbf" not in name)
+    return sorted(stations, key=score)
+
+
 def parse_stations(xml: str) -> list[Station]:
     root = ET.fromstring(xml)
     return [
@@ -194,16 +286,28 @@ class TimetablesClient:
         resp.raise_for_status()
         return resp.text
 
-    async def find_stations(self, query: str) -> list[Station]:
-        if query.isdigit():
-            return [Station(name=query, eva=query)]
-        xml = await self._get(f"/station/{quote(query, safe='')}", allow_404=True)
+    async def _lookup(self, pattern: str) -> list[Station]:
+        xml = await self._get(f"/station/{quote(pattern, safe='')}", allow_404=True)
         return parse_stations(xml) if xml else []
 
+    async def find_stations(self, query: str) -> list[Station]:
+        """Try the name variants in order and return the first non-empty match, best first."""
+        query = query.strip()
+        if query.isdigit():
+            return [Station(name=query, eva=query)]
+        for candidate in station_candidates(query):
+            found = await self._lookup(candidate)
+            if found:
+                return rank_stations(found, candidate)
+        return []
+
     async def resolve_station(self, station: str) -> Station:
-        found = await self.find_stations(station.strip())
+        found = await self.find_stations(station)
         if not found:
-            raise DBApiError(f"No station found for '{station}'. Try the exact name, e.g. 'Berlin Hbf'.")
+            raise DBApiError(
+                f"No station found for '{station}'. DB needs the official name, e.g. "
+                "'Frankfurt(Main)Hbf', 'Köln Hbf', 'Halle(Saale)Hbf'."
+            )
         return found[0]
 
     async def events(self, eva: str, kind: str, start: datetime, hours: int) -> list[Event]:

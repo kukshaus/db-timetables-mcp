@@ -35,3 +35,20 @@ def test_arrivals_use_origin():
 def test_parse_stations():
     xml = '<stations><station name="Dresden Hbf" eva="8010085" ds100="DH"/></stations>'
     assert parse_stations(xml)[0].eva == "8010085"
+
+
+from db_timetables_mcp.client import Station, rank_stations, station_candidates
+
+
+def test_city_names_map_to_main_station():
+    assert station_candidates("Frankfurt Hbf")[0] == "Frankfurt(Main)Hbf"
+    assert station_candidates("Frankfurt (Main) Hbf")[0] == "Frankfurt(Main)Hbf"
+    assert station_candidates("frankfurt")[0] == "Frankfurt(Main)Hbf"
+    assert station_candidates("Muenchen Hbf")[0] == "München Hbf"
+    assert station_candidates("Cologne")[0] == "Köln Hbf"
+    assert station_candidates("Dresden-Neustadt")[0] == "Dresden-Neustadt"
+
+
+def test_underground_platform_ranked_last():
+    found = [Station("Frankfurt Hbf (tief)", "8098105"), Station("Frankfurt(Main)Hbf", "8000105")]
+    assert rank_stations(found, "Frankfurt Hbf")[0].eva == "8000105"
