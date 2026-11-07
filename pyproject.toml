@@ -1,0 +1,28 @@
+[project]
+name = "db-timetables-mcp"
+version = "0.1.0"
+description = "MCP server for live Deutsche Bahn departures, arrivals, delays and platform changes (official Timetables API)"
+license = "MIT"
+keywords = ["mcp", "deutsche-bahn", "train", "timetable", "fastmcp"]
+readme = "README.md"
+authors = [
+    { name = "Sergej Kukshausen", email = "sagei.lol@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "fastmcp>=4.1.6",
+    "httpx>=0.28.1",
+]
+
+[project.scripts]
+db-timetables-mcp = "db_timetables_mcp.server:main"
+
+[build-system]
+requires = ["uv_build>=0.10.9,<0.11.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "respx>=0.23.1",
+]
