@@ -27,7 +27,7 @@ It uses the **official [DB Timetables API](https://developers.deutschebahn.com/d
 **Claude Code**
 
 ```bash
-git clone https://github.com/<you>/db-timetables-mcp.git
+git clone https://github.com/kukshaus/db-timetables-mcp.git
 claude mcp add db-timetables -s user \
   -e DB_CLIENT_ID=your-client-id -e DB_API_KEY=your-api-key \
   -- uv --directory /path/to/db-timetables-mcp run db-timetables-mcp
